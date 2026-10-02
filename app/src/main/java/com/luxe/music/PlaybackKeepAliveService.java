@@ -1,4 +1,3 @@
-```java
 package com.luxe.music;
 
 import android.app.Notification;
@@ -729,4 +728,3 @@ public class PlaybackKeepAliveService extends Service {
         }
     }
 }
-```
