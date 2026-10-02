@@ -1,698 +1,417 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="theme-color" content="#09090b">
-<title>LUXE Music</title>
-<link rel="stylesheet" href="style.css">
-<script src="android-folder-picker.js"></script>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#0d0d0f">
+  <title>LUXE Music</title>
+  <link rel="stylesheet" href="style.css">
 </head>
-
 <body>
-
-<div class="app">
-
-<header class="topbar">
-  <div>
-    <div class="brand">LUXE<span>•</span></div>
-    <div class="subtitle">OFFLINE MUSIC</div>
-  </div>
-
-  <button id="themeBtn" class="icon-btn" title="Customize appearance">✦</button>
-</header>
-
-
-<main>
-
-<!-- WELCOME -->
-
-<section id="welcome" class="welcome screen">
-
-  <div class="hero-ring">
-    <div class="hero-note">♪</div>
-  </div>
-
-  <p class="eyebrow">PRIVATE • OFFLINE • AD-FREE</p>
-
-  <h1>
-    Your music.<br>
-    <em>Your device.</em>
-  </h1>
-
-  <p class="muted">
-    Choose your music folder and LUXE will build your personal
-    offline library. Your music stays on your device.
-  </p>
-
-  <button id="chooseFolderBtn" class="primary-btn">
-    SELECT MUSIC FOLDER
-  </button>
-
-  <input
-    id="folderInput"
-    type="file"
-    webkitdirectory
-    directory
-    multiple
-    accept="audio/*"
-    hidden
-  >
-
-  <p id="folderStatus" class="tiny">
-    Your browser controls access to local files.
-  </p>
-
-</section>
-
-
-<!-- LIBRARY -->
-
-<section id="library" class="screen hidden">
-
-  <div class="greeting">
-
-    <div>
-      <p class="eyebrow">YOUR LIBRARY</p>
-      <h1 id="hello">Good morning</h1>
-    </div>
-
-    <button id="rescanBtn" class="small-btn">
-      ↻ Rescan
-    </button>
-
-  </div>
-
-
-  <!-- HOME CONTENT -->
-
-  <section id="homeContent" class="home-content">
-
-    <div class="home-hero">
-
-      <div>
-        <p class="eyebrow">WELCOME BACK</p>
-
-        <h2>Your music, beautifully organized.</h2>
-
-        <p>
-          Explore your songs, artists, playlists and recently played music.
-        </p>
+  <div class="app-shell">
+    <header class="topbar">
+      <a class="brand" href="#" aria-label="LUXE Music home">
+        <span class="brand-mark">L</span>
+        <span><strong>LUXE</strong><small>M U S I C</small></span>
+      </a>
+      <div class="top-actions">
+        <button class="icon-button" id="rescanBtn" title="Rescan folder" aria-label="Rescan folder">⟳</button>
+        <button class="icon-button customize-trigger" id="customizeBtn" title="Customize LUXE" aria-label="Customize LUXE">⚙</button>
       </div>
+    </header>
 
-      <div class="home-hero-note">♫</div>
+    <main>
+      <nav class="primary-nav" aria-label="Main sections">
+        <button class="nav-item active" data-page="library"><span class="nav-icon">♫</span><span>Library</span></button>
+        <button class="nav-item" data-page="playlists"><span class="nav-icon">▤</span><span>Playlist</span></button>
+        <button class="nav-item" data-page="favourites"><span class="nav-icon">♡</span><span>Favourites</span></button>
+        <button class="nav-item" data-page="recents"><span class="nav-icon">◷</span><span>Recents</span></button>
+      </nav>
 
-    </div>
+      <section class="library-heading">
+        <div>
+          <p class="eyebrow" id="sectionEyebrow">YOUR COLLECTION</p>
+          <h1 id="sectionTitle">Library</h1>
+          <p class="muted" id="trackCount">Choose a music folder to preview your library.</p>
+        </div>
 
-
-    <div class="home-section">
-
-      <div class="home-section-title">
-        <h2>Recently Played</h2>
-        <button id="seeRecentBtn" class="text-btn">See all</button>
-      </div>
-
-      <div id="recentHome" class="horizontal-list"></div>
-
-    </div>
-
-
-    <div class="home-section">
-
-      <div class="home-section-title">
-        <h2>Your Library</h2>
-      </div>
-
-      <div class="library-actions">
-
-        <button class="library-action" data-library="songs">
-          <span class="action-icon">♫</span>
-          <strong>All Songs</strong>
-          <small id="homeSongCount">0 tracks</small>
+        <button class="primary-button" id="chooseFolderBtn">
+          <span>＋</span> Choose folder
         </button>
-
-        <button class="library-action" data-library="artists">
-          <span class="action-icon">♟</span>
-          <strong>Artists</strong>
-          <small id="homeArtistCount">0 artists</small>
-        </button>
-
-        <button class="library-action" data-library="playlists">
-          <span class="action-icon">☷</span>
-          <strong>Playlists</strong>
-          <small id="homePlaylistCount">0 playlists</small>
-        </button>
-
-        <button class="library-action" data-library="favorites">
-          <span class="action-icon">♡</span>
-          <strong>Favorites</strong>
-          <small id="homeFavoriteCount">0 songs</small>
-        </button>
-
-      </div>
-
-    </div>
-
-
-    <div class="home-section">
-
-      <div class="home-section-title">
-        <h2>Quick Play</h2>
-      </div>
-
-      <div class="quick-play-row">
-
-        <button id="shuffleAllBtn" class="quick-play">
-          <span>⤨</span>
-          <div>
-            <strong>Shuffle All</strong>
-            <small>Play your whole library</small>
-          </div>
-        </button>
-
-        <button id="playAllBtn" class="quick-play">
-          <span>▶</span>
-          <div>
-            <strong>Play All</strong>
-            <small>Play songs in order</small>
-          </div>
-        </button>
-
-      </div>
-
-    </div>
-
-  </section>
-
-
-  <!-- SEARCH -->
-
-  <div class="searchbox">
-
-    <span>⌕</span>
-
-    <input
-      id="search"
-      placeholder="Search your music..."
-      autocomplete="off"
-    >
-
-  </div>
-
-
-  <!-- MAIN TABS -->
-
-  <div class="library-tabs">
-
-    <button class="library-tab active" data-library="home">
-      Home
-    </button>
-
-    <button class="library-tab" data-library="songs">
-      All Songs
-    </button>
-
-    <button class="library-tab" data-library="artists">
-      Artists
-    </button>
-
-    <button class="library-tab" data-library="playlists">
-      Playlists
-    </button>
-
-    <button class="library-tab" data-library="favorites">
-      Favorites
-    </button>
-
-  </div>
-
-
-  <div id="breadcrumb" class="breadcrumb hidden"></div>
-
-
-  <div class="section-title">
-
-    <h2 id="sectionHeading">
-      Your Music
-    </h2>
-
-    <div class="view-tools">
-
-      <span id="resultCount"></span>
-
-      <button
-        id="viewList"
-        class="view-btn active"
-        title="List view"
-      >
-        ☷
-      </button>
-
-      <button
-        id="viewGrid"
-        class="view-btn"
-        title="Grid view"
-      >
-        ▦
-      </button>
-
-      <button id="sortBtn" class="view-btn" title="Sort">↕</button>
-
-    </div>
-
-  </div>
-
-
-  <div id="sortMenu" class="sort-menu hidden">
-    <div class="sort-menu-title">SORT / PLAYING ORDER</div>
-    <button data-sort="title-az">Song Title A–Z</button>
-    <button data-sort="title-za">Song Title Z–A</button>
-    <button data-sort="added-new">Date Added — Newest</button>
-    <button data-sort="added-old">Date Added — Oldest</button>
-    <button data-sort="recent">Recently Played</button>
-    <button data-sort="most-played">Most Played</button>
-  </div>
-
-  <div id="songList" class="song-list"></div>
-
-  <div id="collectionGrid" class="collection-grid hidden"></div>
-
-  <div id="playlistGrid" class="playlist-grid hidden"></div>
-
-  <div id="empty" class="empty hidden">
-    Nothing matches your search.
-  </div>
-
-</section>
-
-</main>
-
-
-<!-- MINI PLAYER -->
-
-<div id="miniPlayer" class="mini-player hidden">
-
-  <div class="mini-swipe-handle"></div>
-
-  <div id="miniArt" class="art small-art">
-    ♪
-  </div>
-
-  <div class="mini-info">
-
-    <strong id="miniTitle">
-      Nothing playing
-    </strong>
-
-    <span id="miniArtist">
-      Choose a song
-    </span>
-
-  </div>
-
-  <button
-    id="miniPlay"
-    class="play-circle"
-    aria-label="Play or pause"
-  >
-    ▶
-  </button>
-
-</div>
-
-
-<!-- BOTTOM NAV -->
-
-<nav id="nav" class="bottom-nav hidden">
-
-  <button class="nav-item active" data-tab="home">
-    ⌂
-    <span>Home</span>
-  </button>
-
-  <button class="nav-item" data-tab="library">
-    ♫
-    <span>Library</span>
-  </button>
-
-  <button class="nav-item" data-tab="favorites">
-    ♡
-    <span>Favorites</span>
-  </button>
-
-</nav>
-
-
-<!-- FULL PLAYER -->
-
-<div id="playerModal" class="player-modal hidden">
-
-  <button id="closePlayer" class="close-player">
-    ⌄
-  </button>
-
-  <div class="player-content">
-
-    <div id="bigArt" class="art big-art">
-      ♪
-    </div>
-
-    <p class="eyebrow">
-      NOW PLAYING
-    </p>
-
-    <h2 id="bigTitle">
-      Nothing playing
-    </h2>
-
-    <p id="bigArtist" class="muted">
-      Choose a song
-    </p>
-
-    <p id="bigMeta" class="player-meta">
-      Local Music
-    </p>
-
-    <input
-      id="progress"
-      class="progress"
-      type="range"
-      min="0"
-      max="100"
-      value="0"
-    >
-
-    <div class="time-row">
-      <span id="currentTime">0:00</span>
-      <span id="duration">0:00</span>
-    </div>
-
-    <div class="controls">
-
-      <button id="shuffleBtn" class="control">
-        ⤨
-      </button>
-
-      <button id="prevBtn" class="control">
-        ◀
-      </button>
-
-      <button id="bigPlay" class="big-play">
-        ▶
-      </button>
-
-      <button id="nextBtn" class="control">
-        ▶
-      </button>
-
-      <button id="repeatBtn" class="control">
-        ↻
-      </button>
-
-    </div>
-
-    <div class="volume-row">
-      🔊
-      <input
-        id="volume"
-        type="range"
-        min="0"
-        max="1"
-        step=".01"
-        value=".85"
-      >
-    </div>
-
-  </div>
-
-</div>
-
-
-<!-- THEME PANEL -->
-
-<div id="themePanel" class="overlay hidden">
-
-  <div class="settings-panel">
-
-    <div class="settings-header">
-
-      <div>
-        <p class="eyebrow">APPEARANCE</p>
-        <h2>Customize LUXE</h2>
-      </div>
-
-      <button id="closeTheme" class="panel-close">
-        ×
-      </button>
-
-    </div>
-
-
-    <div class="setting-group">
-
-      <label>Accent Theme</label>
-
-      <div class="theme-options">
-
-        <button data-theme-choice="deluxe">
-          <span class="theme-dot deluxe-dot"></span>
-          Deluxe
-        </button>
-
-        <button data-theme-choice="truck">
-          <span class="theme-dot truck-dot"></span>
-          Warm
-        </button>
-
-        <button data-theme-choice="sport">
-          <span class="theme-dot sport-dot"></span>
-          Sport
-        </button>
-
-      </div>
-
-    </div>
-
-
-    <div class="setting-group">
-
-      <label>Font</label>
-
-      <select id="fontSelect">
-
-        <option value="Inter">
-          Inter
-        </option>
-
-        <option value="Segoe UI">
-          Segoe UI
-        </option>
-
-        <option value="Georgia">
-          Georgia
-        </option>
-
-        <option value="Trebuchet MS">
-          Trebuchet
-        </option>
-
-        <option value="Verdana">
-          Verdana
-        </option>
-
-        <option value="Courier New">
-          Courier
-        </option>
-
-        <option value="Comic Sans MS">
-          Casual
-        </option>
-
-      </select>
-
-      <small>
-        The browser can only use fonts available on the device.
-      </small>
-
-    </div>
-
-
-    <div class="setting-group">
-
-      <label>Background</label>
-
-      <div class="wallpaper-grid">
-
-        <button
-          class="wallpaper preset-wall-1"
-          data-wallpaper="wall1"
-        >
-          Default
-        </button>
-
-        <button
-          class="wallpaper preset-wall-2"
-          data-wallpaper="wall2"
-        >
-          Gold
-        </button>
-
-        <button
-          class="wallpaper preset-wall-3"
-          data-wallpaper="wall3"
-        >
-          Midnight
-        </button>
-
-        <button
-          class="wallpaper preset-wall-4"
-          data-wallpaper="wall4"
-        >
-          Aurora
-        </button>
-
-      </div>
-
-      <label class="upload-wallpaper">
-        + Use image from device
 
         <input
-          id="wallpaperInput"
+          id="folderInput"
           type="file"
-          accept="image/*"
+          webkitdirectory
+          directory
+          multiple
           hidden
         >
+      </section>
 
-      </label>
+      <section class="toolbar">
+        <button class="play-all" id="playAllBtn">
+          <span class="play-triangle">▶</span>
+          <span id="playAllText">Play all</span>
+        </button>
 
-      <button id="removeWallpaper" class="danger-btn">
-        Remove background image
-      </button>
+        <span class="toolbar-count" id="toolbarCount">0 tracks</span>
 
-    </div>
+        <span class="toolbar-spacer"></span>
 
-  </div>
+        <button
+          class="menu-trigger"
+          id="menuBtn"
+          aria-label="Playback and view options"
+          aria-expanded="false"
+        >
+          ☰
+        </button>
 
-</div>
+        <div class="options-menu" id="optionsMenu" hidden>
 
+          <!-- PLAYING ORDER -->
+          <div class="menu-section">
+            <div class="menu-heading">
+              <span>↝</span> Playing Order
+            </div>
 
-<!-- CREATE PLAYLIST PANEL -->
+            <button
+              class="menu-option selected"
+              data-order="consecutive"
+            >
+              <span>Consecutive</span>
+              <span class="check">✓</span>
+            </button>
 
-<div id="playlistCreatePanel" class="overlay hidden">
+            <button
+              class="menu-option"
+              data-order="random"
+            >
+              <span>Random</span>
+              <span class="check"></span>
+            </button>
+          </div>
 
-  <div class="dialog">
+          <div class="menu-divider"></div>
 
-    <div class="dialog-header">
+          <!-- SORT -->
+          <div class="menu-section">
+            <div class="menu-heading">
+              <span>↕</span> Sort
+            </div>
 
-      <div>
-        <p class="eyebrow">NEW PLAYLIST</p>
-        <h2>Create Playlist</h2>
+            <button
+              class="menu-option selected"
+              data-sort="title-az"
+            >
+              <span>Song Title A–Z</span>
+              <span class="check">✓</span>
+            </button>
+
+            <button
+              class="menu-option"
+              data-sort="title-za"
+            >
+              <span>Song Title Z–A</span>
+              <span class="check"></span>
+            </button>
+
+            <button
+              class="menu-option"
+              data-sort="added-new"
+            >
+              <span>Date Added — Newest</span>
+              <span class="check"></span>
+            </button>
+
+            <button
+              class="menu-option"
+              data-sort="added-old"
+            >
+              <span>Date Added — Oldest</span>
+              <span class="check"></span>
+            </button>
+
+            <button
+              class="menu-option"
+              data-sort="recent"
+            >
+              <span>Recently Played</span>
+              <span class="check"></span>
+            </button>
+
+            <button
+              class="menu-option"
+              data-sort="most-played"
+            >
+              <span>Most Played</span>
+              <span class="check"></span>
+            </button>
+          </div>
+
+          <div class="menu-divider"></div>
+
+          <!-- VIEW -->
+          <div class="menu-section">
+            <div class="menu-heading">
+              <span>▦</span> View
+            </div>
+
+            <button
+              class="menu-option selected"
+              data-view="list"
+            >
+              <span>List View</span>
+              <span class="check">✓</span>
+            </button>
+
+            <button
+              class="menu-option"
+              data-view="waterfall"
+            >
+              <span>Waterfall View</span>
+              <span class="check"></span>
+            </button>
+
+            <button
+              class="menu-option"
+              data-view="grid"
+            >
+              <span>Grid View</span>
+              <span class="check"></span>
+            </button>
+          </div>
+
+        </div>
+      </section>
+
+      <section class="empty-state" id="emptyState">
+        <div class="empty-disc">♫</div>
+        <h2>Your music, your space.</h2>
+        <p>
+          Choose a music folder to preview your LUXE library.<br>
+          For this UI test, selected audio files stay in this browser session.
+        </p>
+        <button class="outline-button" id="emptyChooseBtn">
+          Choose music folder
+        </button>
+      </section>
+
+      <section
+        id="songList"
+        class="song-list list-view"
+        aria-label="Songs"
+      ></section>
+
+      <section
+        id="playlistPanel"
+        class="playlist-panel"
+        hidden
+      ></section>
+    </main>
+
+    <footer class="now-playing" id="nowPlaying">
+      <div class="mini-art" id="miniArt">♫</div>
+
+      <div class="now-text">
+        <strong id="nowTitle">Nothing playing</strong>
+        <span id="nowArtist">Choose a song to begin</span>
       </div>
 
-      <button id="closePlaylistCreate" class="panel-close">
-        ×
+      <button
+        class="player-control"
+        id="prevBtn"
+        title="Previous"
+      >
+        |◀
       </button>
 
-    </div>
+      <button
+        class="player-control play-pause"
+        id="pauseBtn"
+        title="Play/Pause"
+      >
+        ▶
+      </button>
 
-    <input
-      id="playlistNameInput"
-      class="dialog-input"
-      placeholder="Playlist name"
-      maxlength="50"
+      <button
+        class="player-control"
+        id="nextBtn"
+        title="Next"
+      >
+        ▶|
+      </button>
+
+      <div class="progress-wrap">
+        <span id="elapsed">0:00</span>
+
+        <input
+          type="range"
+          id="progress"
+          min="0"
+          max="100"
+          value="0"
+        >
+
+        <span id="duration">0:00</span>
+      </div>
+
+      <audio
+        id="audio"
+        preload="metadata"
+      ></audio>
+    </footer>
+  </div>
+
+  <div
+    class="modal-backdrop"
+    id="customizeModal"
+    hidden
+  >
+    <section
+      class="customize-modal"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="customizeTitle"
     >
 
-    <button id="createPlaylistConfirm" class="primary-btn">
-      CREATE PLAYLIST
-    </button>
+      <div class="modal-header">
+        <div>
+          <p class="eyebrow">MAKE IT YOURS</p>
+          <h2 id="customizeTitle">Customize LUXE</h2>
+        </div>
 
-  </div>
-
-</div>
-
-
-<!-- ADD SONGS PANEL -->
-
-<div id="addSongsPanel" class="overlay hidden">
-
-  <div class="dialog add-songs-dialog">
-
-    <div class="dialog-header">
-
-      <div>
-        <p class="eyebrow">PLAYLIST</p>
-        <h2 id="addSongsTitle">Add Songs</h2>
+        <button
+          class="close-button"
+          id="closeCustomize"
+          aria-label="Close"
+        >
+          ×
+        </button>
       </div>
 
-      <button id="closeAddSongs" class="panel-close">
-        ×
-      </button>
+      <div class="customize-content">
 
-    </div>
+        <div class="setting-block">
+          <h3>Accent Theme</h3>
 
-    <div class="add-song-search">
+          <div class="theme-options">
+            <button
+              class="theme-choice selected"
+              data-theme="deluxe"
+            >
+              <i class="dot gold"></i>
+              Deluxe
+            </button>
 
-      <span>⌕</span>
+            <button
+              class="theme-choice"
+              data-theme="warm"
+            >
+              <i class="dot warm"></i>
+              Warm
+            </button>
 
-      <input
-        id="addSongSearch"
-        placeholder="Search songs..."
-      >
+            <button
+              class="theme-choice"
+              data-theme="sport"
+            >
+              <i class="dot sport"></i>
+              Sport
+            </button>
+          </div>
+        </div>
 
-    </div>
+        <div class="setting-block">
+          <h3>Font</h3>
 
-    <div id="addSongList" class="add-song-list"></div>
+          <select
+            id="fontSelect"
+            aria-label="Font"
+          >
+            <option value="Inter">Inter</option>
+            <option value="Arial">Arial</option>
+            <option value="Georgia">Georgia</option>
+            <option value="Trebuchet MS">Trebuchet MS</option>
+            <option value="Courier New">Courier New</option>
+          </select>
 
-    <button id="doneAddSongs" class="primary-btn">
-      DONE
-    </button>
+          <p class="setting-note">
+            Only fonts available in your browser/device are shown in this prototype.
+          </p>
+        </div>
 
-  </div>
+        <div class="setting-block">
+          <h3>Background</h3>
 
-</div>
+          <div class="background-options">
+            <button
+              class="background-choice selected"
+              data-background="default"
+            >
+              Default
+            </button>
 
+            <button
+              class="background-choice gold-bg"
+              data-background="gold"
+            >
+              Gold
+            </button>
 
-<!-- PLAYLIST DETAILS -->
+            <button
+              class="background-choice midnight-bg"
+              data-background="midnight"
+            >
+              Midnight
+            </button>
 
-<div id="playlistPanel" class="overlay hidden">
+            <button
+              class="background-choice aurora-bg"
+              data-background="aurora"
+            >
+              Aurora
+            </button>
+          </div>
 
-  <div class="dialog playlist-dialog">
+          <label class="upload-background">
+            ＋ Use image from device
+            <input
+              id="backgroundInput"
+              type="file"
+              accept="image/*"
+              hidden
+            >
+          </label>
 
-    <div class="dialog-header">
+          <p class="setting-note">
+            Custom image is only applied in this browser preview.
+          </p>
+        </div>
 
-      <div>
-        <p class="eyebrow">PLAYLIST</p>
-        <h2 id="playlistPanelTitle">Playlist</h2>
+        <div class="setting-block">
+          <h3>Music Folder</h3>
+
+          <button
+            class="outline-button full-width"
+            id="changeFolderBtn"
+          >
+            Choose / change music folder
+          </button>
+        </div>
+
       </div>
-
-      <button id="closePlaylistPanel" class="panel-close">
-        ×
-      </button>
-
-    </div>
-
-    <div class="playlist-actions">
-
-      <button id="playlistPlayBtn" class="primary-btn">
-        ▶ PLAY
-      </button>
-
-      <button id="playlistAddBtn" class="secondary-btn">
-        + ADD SONGS
-      </button>
-
-    </div>
-
-    <div id="playlistSongs" class="playlist-songs"></div>
-
+    </section>
   </div>
 
-</div>
+  <div
+    class="toast"
+    id="toast"
+    role="status"
+    aria-live="polite"
+  ></div>
 
-
-<audio id="audio" preload="metadata"></audio>
-
-<script src="app.js"></script>
-
+  <script src="app.js"></script>
 </body>
 </html>
