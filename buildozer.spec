@@ -13,7 +13,9 @@ fullscreen = 0
 # Music folder access is granted by Android's Storage Access Framework picker.
 android.permissions = READ_MEDIA_AUDIO,READ_EXTERNAL_STORAGE
 android.api = 35
-android.minapi = 23
+# CPython remote-debugging APIs preadv/pwritev require Android API 24+
+android.minapi = 24
+android.ndk_api = 24
 android.archs = arm64-v8a, armeabi-v7a
 android.accept_sdk_license = True
 
