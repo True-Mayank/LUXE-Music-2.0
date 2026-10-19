@@ -26,3 +26,8 @@ python main.py
 - The scan includes supported audio files in subfolders.
 - This project has not yet been compiled or tested on a physical Android phone in this workspace. Please treat the APK as a test build until folder selection, playback, and different audio formats have been verified on your device.
 - Lock-screen/notification controls, true album-art extraction, and custom background image selection still need dedicated implementation and device testing.
+
+
+### Android build compatibility note
+
+The minimum Android API and NDK API are set to 24 because the CPython runtime currently being built uses `preadv`/`pwritev`, which are not available at API 23. This means the APK requires Android 7.0 (Nougat) or newer. The GitHub Actions build has not been run from this environment; check the next Actions log to confirm the toolchain passes this stage.
