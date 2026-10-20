@@ -3,13 +3,15 @@ name: Build LUXE Music APK
 on:
   workflow_dispatch:
   push:
-    branches: [ "main" ]
+    branches:
+      - main
+
+permissions:
+  contents: read
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
 
     steps:
       - name: Checkout repository
@@ -21,36 +23,38 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Set up Android SDK command-line tools and accept licences
+      - name: Set up Android SDK and accept licenses
         uses: android-actions/setup-android@v3
-        with:
-          accept-android-sdk-licenses: true
 
       - name: Install Android SDK packages
         shell: bash
         run: |
           set -euo pipefail
-          : "${ANDROID_HOME:?ANDROID_HOME was not set by setup-android}"
-          SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager -print -quit)"
+
+          SDKMANAGER="$(find "${ANDROID_HOME}/cmdline-tools" \
+            -type f -name sdkmanager -print -quit)"
+
           if [ -z "$SDKMANAGER" ]; then
-            echo "Could not find sdkmanager under $ANDROID_HOME/cmdline-tools" >&2
-            find "$ANDROID_HOME" -maxdepth 5 -type f -name sdkmanager -print || true
+            echo "ERROR: Android SDK manager was not found."
             exit 1
           fi
-          echo "Using sdkmanager: $SDKMANAGER"
-          # Licences are accepted in the setup-android step above. Do not pipe
-          # `yes` into this command: pipefail can turn yes's expected broken pipe
-          # into a failed GitHub Actions step.
-          "$SDKMANAGER" --sdk_root="$ANDROID_HOME" --install             "platform-tools"             "platforms;android-35"             "build-tools;35.0.0"
 
-      - name: Verify Android SDK installation
+          echo "Using sdkmanager: $SDKMANAGER"
+
+          "$SDKMANAGER" --sdk_root="$ANDROID_HOME" --install \
+            "platform-tools" \
+            "platforms;android-35" \
+            "build-tools;35.0.0"
+
+      - name: Verify Android SDK
         shell: bash
         run: |
           set -euo pipefail
-          echo "ANDROID_HOME=$ANDROID_HOME"
+
           test -d "$ANDROID_HOME/platform-tools"
           test -d "$ANDROID_HOME/platforms/android-35"
           test -d "$ANDROID_HOME/build-tools/35.0.0"
+
           java -version
 
       - name: Set up Gradle
@@ -59,7 +63,25 @@ jobs:
           gradle-version: "8.9"
 
       - name: Build Debug APK
-        run: gradle --version && gradle :app:assembleDebug --no-daemon --stacktrace
+        shell: bash
+        run: |
+          set -euo pipefail
+          gradle --version
+          gradle :app:assembleDebug --no-daemon --stacktrace
+
+      - name: Verify APK exists
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          APK_PATH="app/build/outputs/apk/debug/app-debug.apk"
+
+          if [ ! -f "$APK_PATH" ]; then
+            echo "ERROR: APK was not generated at $APK_PATH"
+            exit 1
+          fi
+
+          ls -lh "$APK_PATH"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
