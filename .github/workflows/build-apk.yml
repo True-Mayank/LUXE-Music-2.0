@@ -3,18 +3,13 @@ name: Build LUXE Music APK
 on:
   workflow_dispatch:
   push:
-    branches: ["main"]
+    branches: [ "main" ]
 
 jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-
-    env:
-      JAVA_HOME: /usr/lib/jvm/temurin-17-jdk-amd64
-      ANDROID_HOME: /usr/local/lib/android/sdk
-      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
 
     steps:
       - name: Checkout repository
@@ -26,33 +21,37 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Set up Android SDK
+      - name: Set up Android SDK command-line tools and accept licences
         uses: android-actions/setup-android@v3
+        with:
+          accept-android-sdk-licenses: true
 
       - name: Install Android SDK packages
         shell: bash
         run: |
           set -euo pipefail
-
-          echo "ANDROID_HOME=${ANDROID_HOME:-}"
-          echo "ANDROID_SDK_ROOT=${ANDROID_SDK_ROOT:-}"
-
-          # Accept Android licenses without broken pipe issues
-          yes 2>/dev/null | sdkmanager --licenses || true
-
-          sdkmanager --install \
-            "platform-tools" \
-            "platforms;android-35" \
-            "build-tools;35.0.0"
+          : "${ANDROID_HOME:?ANDROID_HOME was not set by setup-android}"
+          SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager -print -quit)"
+          if [ -z "$SDKMANAGER" ]; then
+            echo "Could not find sdkmanager under $ANDROID_HOME/cmdline-tools" >&2
+            find "$ANDROID_HOME" -maxdepth 5 -type f -name sdkmanager -print || true
+            exit 1
+          fi
+          echo "Using sdkmanager: $SDKMANAGER"
+          # Licences are accepted in the setup-android step above. Do not pipe
+          # `yes` into this command: pipefail can turn yes's expected broken pipe
+          # into a failed GitHub Actions step.
+          "$SDKMANAGER" --sdk_root="$ANDROID_HOME" --install             "platform-tools"             "platforms;android-35"             "build-tools;35.0.0"
 
       - name: Verify Android SDK installation
         shell: bash
         run: |
           set -euo pipefail
+          echo "ANDROID_HOME=$ANDROID_HOME"
           test -d "$ANDROID_HOME/platform-tools"
           test -d "$ANDROID_HOME/platforms/android-35"
           test -d "$ANDROID_HOME/build-tools/35.0.0"
-          sdkmanager --list | head
+          java -version
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
@@ -60,15 +59,11 @@ jobs:
           gradle-version: "8.9"
 
       - name: Build Debug APK
-        shell: bash
-        run: |
-          set -euo pipefail
-          chmod +x ./gradlew
-          ./gradlew :app:assembleDebug --no-daemon --stacktrace
+        run: gradle --version && gradle :app:assembleDebug --no-daemon --stacktrace
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: LUXE-Music-debug
-          path: app/build/outputs/apk/debug/*.apk
+          path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
