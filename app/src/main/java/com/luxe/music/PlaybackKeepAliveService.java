@@ -6,85 +6,938 @@ import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Intent;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.media.AudioAttributes;
-import android.media.MediaMetadataRetriever;
 import android.media.MediaPlayer;
+import android.media.MediaMetadata;
 import android.media.session.MediaSession;
-import android.net.Uri;
 import android.media.session.PlaybackState;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
+import android.os.Looper;
 import android.os.PowerManager;
+import android.support.v4.media.session.MediaSessionCompat;
+import android.util.Log;
+
+import androidx.annotation.Nullable;
+import androidx.core.app.NotificationCompat;
+
 import org.json.JSONArray;
 import org.json.JSONObject;
+
+import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.List;
 
 public class PlaybackKeepAliveService extends Service {
-    public static final String ACTION_PLAY_QUEUE="luxe.PLAY_QUEUE", ACTION_PLAY="luxe.PLAY", ACTION_PAUSE="luxe.PAUSE", ACTION_NEXT="luxe.NEXT", ACTION_PREVIOUS="luxe.PREVIOUS", ACTION_SEEK="luxe.SEEK", ACTION_STOP="luxe.STOP", ACTION_SET_REPEAT="luxe.SET_REPEAT", ACTION_STATE="luxe.STATE";
-    private static PlaybackKeepAliveService instance;
-    private final Handler handler=new Handler(); private final List<Track> queue=new ArrayList<>(); private MediaPlayer player; private boolean playerPrepared=false; private MediaSession session; private PowerManager.WakeLock wakeLock; private int index=-1; private boolean repeat=false;
-    private final Runnable ticker=()->{publishState();if(player!=null&&player.isPlaying())handler.postDelayed(ticker,1000);};
-    @Override public void onCreate(){super.onCreate();instance=this;createChannel();session=new MediaSession(this,"LUXE Music");session.setCallback(new MediaSession.Callback(){@Override public void onPlay(){play();}@Override public void onPause(){pause();}@Override public void onSkipToNext(){next();}@Override public void onSkipToPrevious(){previous();}@Override public void onSeekTo(long p){seek(p);}@Override public void onStop(){stopPlayback(true);}});session.setActive(true);PowerManager pm=(PowerManager)getSystemService(POWER_SERVICE);wakeLock=pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK,"LUXE:Playback");}
-    private void createChannel(){if(Build.VERSION.SDK_INT>=26)((NotificationManager)getSystemService(NOTIFICATION_SERVICE)).createNotificationChannel(new NotificationChannel("luxe_playback","LUXE Music Playback",NotificationManager.IMPORTANCE_LOW));}
-    @Override public int onStartCommand(Intent intent,int flags,int startId){try{String a=intent==null?null:intent.getAction();if(ACTION_PLAY_QUEUE.equals(a))loadQueue(intent.getStringExtra("queue"),intent.getIntExtra("index",0),intent.getBooleanExtra("repeat",false));else if(ACTION_PLAY.equals(a))play();else if(ACTION_PAUSE.equals(a))pause();else if(ACTION_NEXT.equals(a))next();else if(ACTION_PREVIOUS.equals(a))previous();else if(ACTION_SEEK.equals(a))seek(intent.getLongExtra("position",0));else if(ACTION_STOP.equals(a))stopPlayback(true);else if(ACTION_SET_REPEAT.equals(a)){repeat=intent.getBooleanExtra("repeat",false);publishState();}}catch(Exception ignored){}return START_NOT_STICKY;}
-    private void loadQueue(String raw,int start,boolean rep)throws Exception{
-        queue.clear();
-        JSONArray a=new JSONArray(raw);
-        for(int i=0;i<a.length();i++){
-            JSONObject o=a.getJSONObject(i);
-            String id=o.optString("id", "");
-            String url=o.optString("url", "");
-            // Native Android playback must use the SAF content URI in id.
-            // The luxe.local URL is intercepted by WebView only and cannot be
-            // opened by MediaPlayer directly.
-            if(!id.isEmpty() || !url.isEmpty()) queue.add(new Track(id,o.optString("title","Unknown Title"),o.optString("artist","Unknown Artist"),url));
-        }
-        repeat=rep;
-        if(queue.isEmpty()){index=-1;releasePlayer();publishState();return;}
-        index=Math.max(0,Math.min(start,queue.size()-1));
-        playIndex(index);
-    }
-    private void play(){if(queue.isEmpty())return;if(player!=null&&playerPrepared&&!player.isPlaying()){player.start();if(!wakeLock.isHeld())wakeLock.acquire(4*60*60*1000L);handler.removeCallbacks(ticker);handler.post(ticker);startForeground(4207,notification());publishState();updateSession();return;}playIndex(index);}
-    private void playIndex(int i){
-        if(i<0||i>=queue.size())return;
-        index=i; releasePlayer(); playerPrepared=false;
-        Track t=queue.get(i); player=new MediaPlayer();
-        try {
-            // Enter foreground immediately; preparation can take several seconds.
-            startForeground(4207, notification());
-            player.setAudioAttributes(new AudioAttributes.Builder().setContentType(AudioAttributes.CONTENT_TYPE_MUSIC).setUsage(AudioAttributes.USAGE_MEDIA).build());
-            if(t.id != null && t.id.startsWith("content://")) {
-                player.setDataSource(getApplicationContext(), Uri.parse(t.id));
-            } else if(t.url != null && !t.url.isEmpty() && !t.url.startsWith("https://luxe.local/audio/")) {
-                player.setDataSource(t.url);
-            } else {
-                throw new IllegalArgumentException("This track has no playable Android content URI.");
+
+    private static final String TAG = "LUXEPlaybackService";
+
+    private static final String CHANNEL_ID = "luxe_music_playback";
+    private static final int NOTIFICATION_ID = 1201;
+
+    public static final String ACTION_PLAY_QUEUE = "PLAY_QUEUE";
+    public static final String ACTION_PLAY = "PLAY";
+    public static final String ACTION_PAUSE = "PAUSE";
+    public static final String ACTION_NEXT = "NEXT";
+    public static final String ACTION_PREVIOUS = "PREVIOUS";
+    public static final String ACTION_SEEK = "SEEK";
+    public static final String ACTION_SET_REPEAT = "SET_REPEAT";
+    public static final String ACTION_STOP = "STOP";
+
+    private static final String ACTION_NOTIFICATION_PLAY =
+            "com.luxe.music.NOTIFICATION_PLAY";
+    private static final String ACTION_NOTIFICATION_PAUSE =
+            "com.luxe.music.NOTIFICATION_PAUSE";
+    private static final String ACTION_NOTIFICATION_NEXT =
+            "com.luxe.music.NOTIFICATION_NEXT";
+    private static final String ACTION_NOTIFICATION_PREVIOUS =
+            "com.luxe.music.NOTIFICATION_PREVIOUS";
+
+    private MediaPlayer player;
+    private MediaSession mediaSession;
+    private PowerManager.WakeLock wakeLock;
+
+    private final Handler handler = new Handler(Looper.getMainLooper());
+
+    private final List<Track> queue = new ArrayList<>();
+
+    private int currentIndex = -1;
+    private int repeatMode = 0;
+
+    private boolean isPreparing = false;
+    private boolean serviceDestroyed = false;
+
+    private String currentTitle = "LUXE Music";
+    private String currentArtist = "Unknown Artist";
+    private String currentAlbum = "Local Music";
+
+    /*
+     * IMPORTANT:
+     * Use an anonymous Runnable so it can reschedule itself with "this".
+     * This avoids the Java self-reference-in-initializer compilation error.
+     */
+    private final Runnable ticker = new Runnable() {
+        @Override
+        public void run() {
+            publishState();
+
+            if (player != null && player.isPlaying()) {
+                handler.postDelayed(this, 1000);
             }
-            player.setOnPreparedListener(mp->{
-                playerPrepared=true; mp.start(); if(!wakeLock.isHeld())wakeLock.acquire(4*60*60*1000L);
-                startForeground(4207,notification()); handler.removeCallbacks(ticker); handler.post(ticker); updateSession(); publishState();
-            });
-            player.setOnCompletionListener(mp->{if(repeat)playIndex(index);else if(index+1<queue.size())playIndex(index+1);else{publishState();updateSession();}});
-            player.setOnErrorListener((mp, what, extra)->{releasePlayer();publishState();updateSession();return true;});
-            player.prepareAsync();
-        } catch(Exception e) {
-            releasePlayer(); publishState(); updateSession();
+        }
+    };
+
+    private static class Track {
+        String id;
+        String title;
+        String artist;
+        String album;
+        String url;
+
+        Track(
+                String id,
+                String title,
+                String artist,
+                String album,
+                String url
+        ) {
+            this.id = id;
+            this.title = title;
+            this.artist = artist;
+            this.album = album;
+            this.url = url;
         }
     }
-    private void pause(){if(player!=null&&player.isPlaying()){player.pause();if(wakeLock.isHeld())wakeLock.release();publishState();updateSession();}}
-    private void next(){if(index+1<queue.size())playIndex(index+1);else if(repeat&&!queue.isEmpty())playIndex(0);}
-    private void previous(){if(player!=null&&player.getCurrentPosition()>3000){player.seekTo(0);publishState();}else if(index>0)playIndex(index-1);else if(repeat&&!queue.isEmpty())playIndex(queue.size()-1);}
-    private void seek(long p){if(player!=null){try{player.seekTo((int)Math.max(0,p));}catch(Exception ignored){}publishState();}}
-    private void releasePlayer(){playerPrepared=false;if(player!=null){try{player.reset();}catch(Exception ignored){}player.release();player=null;}handler.removeCallbacks(ticker);}
-    private void stopPlayback(boolean remove){releasePlayer();if(wakeLock.isHeld())wakeLock.release();publishState();if(remove)stopForeground(true);}
-    private Notification notification(){Track t=index>=0&&index<queue.size()?queue.get(index):new Track("","LUXE Music",""," ");Intent open=new Intent(this,MainActivity.class);PendingIntent pi=PendingIntent.getActivity(this,1,open,PendingIntent.FLAG_IMMUTABLE|PendingIntent.FLAG_UPDATE_CURRENT);Notification.Builder b=Build.VERSION.SDK_INT>=26?new Notification.Builder(this,"luxe_playback"):new Notification.Builder(this);b.setSmallIcon(android.R.drawable.ic_media_play).setContentTitle(t.title).setContentText(t.artist).setContentIntent(pi).setOngoing(player!=null&&player.isPlaying()).setStyle(new Notification.MediaStyle().setMediaSession(session.getSessionToken()));return b.build();}
-    private void updateSession(){if(session==null)return;long pos=player==null?0:Math.max(0,player.getCurrentPosition());int state=player!=null&&player.isPlaying()?PlaybackState.STATE_PLAYING:PlaybackState.STATE_PAUSED;session.setPlaybackState(new PlaybackState.Builder().setActions(PlaybackState.ACTION_PLAY|PlaybackState.ACTION_PAUSE|PlaybackState.ACTION_SKIP_TO_NEXT|PlaybackState.ACTION_SKIP_TO_PREVIOUS|PlaybackState.ACTION_SEEK_TO).setState(state,pos,1f).build());session.setMetadata(new android.media.MediaMetadata.Builder().putString(android.media.MediaMetadata.METADATA_KEY_TITLE,index>=0&&index<queue.size()?queue.get(index).title:"LUXE Music").putString(android.media.MediaMetadata.METADATA_KEY_ARTIST,index>=0&&index<queue.size()?queue.get(index).artist:"").build());}
-    private void publishState(){Intent i=new Intent(ACTION_STATE);Track t=index>=0&&index<queue.size()?queue.get(index):null;i.putExtra("id",t==null?"":t.id).putExtra("title",t==null?"":t.title).putExtra("artist",t==null?"":t.artist).putExtra("playing",player!=null&&player.isPlaying()).putExtra("position",player==null?0:player.getCurrentPosition()).putExtra("duration",player==null?0:player.getDuration()).putExtra("queueIndex",index).putExtra("queueSize",queue.size());sendBroadcast(i);if(player!=null&&player.isPlaying())startForeground(4207,notification());}
-    public static void requestState(android.content.Context c){if(instance!=null)instance.publishState();}
-    @Override public void onTaskRemoved(Intent root){stopPlayback(true);stopSelf();super.onTaskRemoved(root);}
-    @Override public void onDestroy(){stopPlayback(false);if(session!=null){session.setActive(false);session.release();}instance=null;super.onDestroy();}
-    @Override public IBinder onBind(Intent intent){return null;}
-    private static class Track{final String id,title,artist,url;Track(String i,String t,String a,String u){id=i;title=t;artist=a;url=u;}}
+
+    @Override
+    public void onCreate() {
+        super.onCreate();
+
+        createNotificationChannel();
+        initializeMediaSession();
+        initializeWakeLock();
+
+        Log.d(TAG, "Playback service created");
+    }
+
+    @Override
+    public int onStartCommand(Intent intent, int flags, int startId) {
+        if (intent == null) {
+            return START_STICKY;
+        }
+
+        String action = intent.getAction();
+
+        if (action == null) {
+            return START_STICKY;
+        }
+
+        Log.d(TAG, "Received action: " + action);
+
+        switch (action) {
+            case ACTION_PLAY_QUEUE:
+                handlePlayQueue(intent);
+                break;
+
+            case ACTION_PLAY:
+            case ACTION_NOTIFICATION_PLAY:
+                resumePlayback();
+                break;
+
+            case ACTION_PAUSE:
+            case ACTION_NOTIFICATION_PAUSE:
+                pausePlayback();
+                break;
+
+            case ACTION_NEXT:
+            case ACTION_NOTIFICATION_NEXT:
+                playNext();
+                break;
+
+            case ACTION_PREVIOUS:
+            case ACTION_NOTIFICATION_PREVIOUS:
+                playPrevious();
+                break;
+
+            case ACTION_SEEK:
+                seekTo(intent);
+                break;
+
+            case ACTION_SET_REPEAT:
+                setRepeatMode(intent);
+                break;
+
+            case ACTION_STOP:
+                stopPlayback();
+                break;
+
+            default:
+                Log.w(TAG, "Unknown action: " + action);
+                break;
+        }
+
+        return START_STICKY;
+    }
+
+    private void initializeMediaSession() {
+        mediaSession = new MediaSession(this, "LUXE Music");
+
+        mediaSession.setFlags(
+                MediaSession.FLAG_HANDLES_MEDIA_BUTTONS
+                        | MediaSession.FLAG_HANDLES_TRANSPORT_CONTROLS
+        );
+
+        mediaSession.setCallback(new MediaSession.Callback() {
+            @Override
+            public void onPlay() {
+                resumePlayback();
+            }
+
+            @Override
+            public void onPause() {
+                pausePlayback();
+            }
+
+            @Override
+            public void onSkipToNext() {
+                playNext();
+            }
+
+            @Override
+            public void onSkipToPrevious() {
+                playPrevious();
+            }
+
+            @Override
+            public void onSeekTo(long position) {
+                if (player != null) {
+                    try {
+                        player.seekTo((int) position);
+                        publishState();
+                    } catch (IllegalStateException e) {
+                        Log.e(TAG, "Unable to seek", e);
+                    }
+                }
+            }
+
+            @Override
+            public void onStop() {
+                stopPlayback();
+            }
+        });
+
+        mediaSession.setActive(true);
+    }
+
+    private void initializeWakeLock() {
+        try {
+            PowerManager powerManager =
+                    (PowerManager) getSystemService(POWER_SERVICE);
+
+            if (powerManager != null) {
+                wakeLock = powerManager.newWakeLock(
+                        PowerManager.PARTIAL_WAKE_LOCK,
+                        "LUXEMusic:PlaybackWakeLock"
+                );
+
+                wakeLock.setReferenceCounted(false);
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Unable to create wake lock", e);
+        }
+    }
+
+    private void acquireWakeLock() {
+        try {
+            if (wakeLock != null && !wakeLock.isHeld()) {
+                wakeLock.acquire();
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Unable to acquire wake lock", e);
+        }
+    }
+
+    private void releaseWakeLock() {
+        try {
+            if (wakeLock != null && wakeLock.isHeld()) {
+                wakeLock.release();
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Unable to release wake lock", e);
+        }
+    }
+
+    private void createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            NotificationChannel channel = new NotificationChannel(
+                    CHANNEL_ID,
+                    "LUXE Music Playback",
+                    NotificationManager.IMPORTANCE_LOW
+            );
+
+            channel.setDescription(
+                    "Playback controls for LUXE Music"
+            );
+
+            channel.setShowBadge(false);
+
+            NotificationManager manager =
+                    getSystemService(NotificationManager.class);
+
+            if (manager != null) {
+                manager.createNotificationChannel(channel);
+            }
+        }
+    }
+
+    private void handlePlayQueue(Intent intent) {
+        String queueJson = intent.getStringExtra("queue");
+
+        if (queueJson == null) {
+            queueJson = intent.getStringExtra("songs");
+        }
+
+        int requestedIndex = intent.getIntExtra(
+                "currentIndex",
+                intent.getIntExtra("index", 0)
+        );
+
+        if (queueJson != null) {
+            parseQueue(queueJson);
+        }
+
+        if (queue.isEmpty()) {
+            Log.w(TAG, "Cannot start playback: queue is empty");
+            publishState();
+            return;
+        }
+
+        if (requestedIndex < 0 || requestedIndex >= queue.size()) {
+            requestedIndex = 0;
+        }
+
+        currentIndex = requestedIndex;
+        playCurrentTrack();
+    }
+
+    private void parseQueue(String json) {
+        queue.clear();
+
+        try {
+            JSONArray array = new JSONArray(json);
+
+            for (int i = 0; i < array.length(); i++) {
+                JSONObject object = array.getJSONObject(i);
+
+                String id = object.optString("id", "");
+                String title = object.optString(
+                        "title",
+                        "Unknown Title"
+                );
+                String artist = object.optString(
+                        "artist",
+                        "Unknown Artist"
+                );
+                String album = object.optString(
+                        "album",
+                        "Local Music"
+                );
+                String url = object.optString("url", "");
+
+                queue.add(new Track(
+                        id,
+                        title,
+                        artist,
+                        album,
+                        url
+                ));
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Unable to parse playback queue", e);
+        }
+    }
+
+    private void playCurrentTrack() {
+        if (currentIndex < 0 || currentIndex >= queue.size()) {
+            Log.w(TAG, "Invalid current track index");
+            return;
+        }
+
+        Track track = queue.get(currentIndex);
+
+        releasePlayer();
+
+        currentTitle = track.title;
+        currentArtist = track.artist;
+        currentAlbum = track.album;
+
+        isPreparing = true;
+        acquireWakeLock();
+
+        try {
+            player = new MediaPlayer();
+
+            player.setAudioAttributes(
+                    new AudioAttributes.Builder()
+                            .setUsage(AudioAttributes.USAGE_MEDIA)
+                            .setContentType(
+                                    AudioAttributes.CONTENT_TYPE_MUSIC
+                            )
+                            .build()
+            );
+
+            /*
+             * Android native playback must use the original content URI
+             * when available. The WebView URL is only a fallback.
+             */
+            String source = track.id;
+
+            if (source == null || source.isEmpty()) {
+                source = track.url;
+            }
+
+            if (source == null || source.isEmpty()) {
+                throw new IllegalArgumentException(
+                        "No audio URI is available for this track"
+                );
+            }
+
+            if (source.startsWith("content://")
+                    || source.startsWith("file://")
+                    || source.startsWith("android.resource://")) {
+
+                player.setDataSource(
+                        getApplicationContext(),
+                        Uri.parse(source)
+                );
+
+            } else {
+                player.setDataSource(source);
+            }
+
+            player.setOnPreparedListener(mediaPlayer -> {
+                isPreparing = false;
+
+                try {
+                    mediaPlayer.start();
+                    updateMediaSessionMetadata();
+                    updateMediaSessionPlaybackState();
+                    showNotification();
+                    scheduleTicker();
+                    publishState();
+                } catch (Exception e) {
+                    Log.e(TAG, "Unable to start playback", e);
+                    releasePlayer();
+                    publishState();
+                }
+            });
+
+            player.setOnCompletionListener(mediaPlayer -> {
+                if (repeatMode == 1) {
+                    playCurrentTrack();
+                } else {
+                    playNext();
+                }
+            });
+
+            player.setOnErrorListener((mediaPlayer, what, extra) -> {
+                Log.e(
+                        TAG,
+                        "MediaPlayer error: what=" + what
+                                + ", extra=" + extra
+                );
+
+                isPreparing = false;
+                publishState();
+                return true;
+            });
+
+            startForeground(
+                    NOTIFICATION_ID,
+                    buildNotification()
+            );
+
+            player.prepareAsync();
+
+            updateMediaSessionMetadata();
+            updateMediaSessionPlaybackState();
+            showNotification();
+            publishState();
+
+        } catch (Exception e) {
+            Log.e(TAG, "Unable to prepare track", e);
+
+            isPreparing = false;
+            releasePlayer();
+            publishState();
+        }
+    }
+
+    private void resumePlayback() {
+        if (player != null) {
+            try {
+                if (!player.isPlaying() && !isPreparing) {
+                    player.start();
+                    acquireWakeLock();
+                    scheduleTicker();
+                }
+
+                updateMediaSessionPlaybackState();
+                showNotification();
+                publishState();
+                return;
+
+            } catch (IllegalStateException e) {
+                Log.e(TAG, "Unable to resume playback", e);
+            }
+        }
+
+        if (currentIndex >= 0 && currentIndex < queue.size()) {
+            playCurrentTrack();
+        }
+    }
+
+    private void pausePlayback() {
+        if (player != null) {
+            try {
+                if (player.isPlaying()) {
+                    player.pause();
+                }
+            } catch (IllegalStateException e) {
+                Log.e(TAG, "Unable to pause playback", e);
+            }
+        }
+
+        handler.removeCallbacks(ticker);
+
+        releaseWakeLock();
+
+        updateMediaSessionPlaybackState();
+        showNotification();
+        publishState();
+    }
+
+    private void playNext() {
+        if (queue.isEmpty()) {
+            return;
+        }
+
+        if (repeatMode == 2) {
+            currentIndex = (int) (Math.random() * queue.size());
+        } else {
+            currentIndex++;
+
+            if (currentIndex >= queue.size()) {
+                currentIndex = 0;
+            }
+        }
+
+        playCurrentTrack();
+    }
+
+    private void playPrevious() {
+        if (queue.isEmpty()) {
+            return;
+        }
+
+        if (player != null) {
+            try {
+                if (player.getCurrentPosition() > 3000) {
+                    player.seekTo(0);
+                    publishState();
+                    return;
+                }
+            } catch (IllegalStateException ignored) {
+            }
+        }
+
+        currentIndex--;
+
+        if (currentIndex < 0) {
+            currentIndex = queue.size() - 1;
+        }
+
+        playCurrentTrack();
+    }
+
+    private void seekTo(Intent intent) {
+        if (player == null) {
+            return;
+        }
+
+        int position = intent.getIntExtra(
+                "position",
+                intent.getIntExtra("seekTo", 0)
+        );
+
+        try {
+            player.seekTo(Math.max(position, 0));
+            publishState();
+        } catch (IllegalStateException e) {
+            Log.e(TAG, "Unable to seek", e);
+        }
+    }
+
+    private void setRepeatMode(Intent intent) {
+        repeatMode = intent.getIntExtra(
+                "repeatMode",
+                intent.getIntExtra("mode", 0)
+        );
+
+        if (repeatMode < 0 || repeatMode > 2) {
+            repeatMode = 0;
+        }
+
+        publishState();
+    }
+
+    private void stopPlayback() {
+        handler.removeCallbacks(ticker);
+
+        releasePlayer();
+        releaseWakeLock();
+
+        currentIndex = -1;
+
+        if (mediaSession != null) {
+            mediaSession.setActive(false);
+        }
+
+        stopForeground(true);
+        stopSelf();
+
+        publishState();
+    }
+
+    private void releasePlayer() {
+        handler.removeCallbacks(ticker);
+
+        if (player != null) {
+            try {
+                player.setOnPreparedListener(null);
+                player.setOnCompletionListener(null);
+                player.setOnErrorListener(null);
+                player.reset();
+                player.release();
+            } catch (Exception e) {
+                Log.e(TAG, "Error releasing player", e);
+            }
+
+            player = null;
+        }
+
+        isPreparing = false;
+    }
+
+    private void scheduleTicker() {
+        handler.removeCallbacks(ticker);
+        handler.post(ticker);
+    }
+
+    private void updateMediaSessionMetadata() {
+        if (mediaSession == null) {
+            return;
+        }
+
+        MediaMetadata metadata = new MediaMetadata.Builder()
+                .putString(
+                        MediaMetadata.METADATA_KEY_TITLE,
+                        currentTitle
+                )
+                .putString(
+                        MediaMetadata.METADATA_KEY_ARTIST,
+                        currentArtist
+                )
+                .putString(
+                        MediaMetadata.METADATA_KEY_ALBUM,
+                        currentAlbum
+                )
+                .build();
+
+        mediaSession.setMetadata(metadata);
+    }
+
+    private void updateMediaSessionPlaybackState() {
+        if (mediaSession == null) {
+            return;
+        }
+
+        boolean playing = false;
+        int position = 0;
+
+        if (player != null) {
+            try {
+                playing = player.isPlaying();
+
+                if (player.getCurrentPosition() >= 0) {
+                    position = player.getCurrentPosition();
+                }
+            } catch (IllegalStateException ignored) {
+            }
+        }
+
+        int state = playing
+                ? PlaybackState.STATE_PLAYING
+                : PlaybackState.STATE_PAUSED;
+
+        PlaybackState playbackState =
+                new PlaybackState.Builder()
+                        .setActions(
+                                PlaybackState.ACTION_PLAY
+                                        | PlaybackState.ACTION_PAUSE
+                                        | PlaybackState.ACTION_PLAY_PAUSE
+                                        | PlaybackState.ACTION_SKIP_TO_NEXT
+                                        | PlaybackState.ACTION_SKIP_TO_PREVIOUS
+                                        | PlaybackState.ACTION_SEEK_TO
+                                        | PlaybackState.ACTION_STOP
+                        )
+                        .setState(
+                                state,
+                                position,
+                                playing ? 1.0f : 0.0f
+                        )
+                        .build();
+
+        mediaSession.setPlaybackState(playbackState);
+    }
+
+    private Notification buildNotification() {
+        boolean playing = false;
+
+        if (player != null) {
+            try {
+                playing = player.isPlaying();
+            } catch (IllegalStateException ignored) {
+            }
+        }
+
+        Intent openAppIntent = getPackageManager()
+                .getLaunchIntentForPackage(getPackageName());
+
+        PendingIntent contentPendingIntent = null;
+
+        if (openAppIntent != null) {
+            contentPendingIntent = PendingIntent.getActivity(
+                    this,
+                    100,
+                    openAppIntent,
+                    pendingIntentFlags()
+            );
+        }
+
+        PendingIntent previousPendingIntent =
+                createActionPendingIntent(
+                        ACTION_NOTIFICATION_PREVIOUS,
+                        101
+                );
+
+        PendingIntent playPausePendingIntent =
+                createActionPendingIntent(
+                        playing
+                                ? ACTION_NOTIFICATION_PAUSE
+                                : ACTION_NOTIFICATION_PLAY,
+                        102
+                );
+
+        PendingIntent nextPendingIntent =
+                createActionPendingIntent(
+                        ACTION_NOTIFICATION_NEXT,
+                        103
+                );
+
+        NotificationCompat.Builder builder =
+                new NotificationCompat.Builder(this, CHANNEL_ID)
+                        .setSmallIcon(android.R.drawable.ic_media_play)
+                        .setContentTitle(
+                                currentTitle == null
+                                        ? "LUXE Music"
+                                        : currentTitle
+                        )
+                        .setContentText(
+                                currentArtist == null
+                                        ? "Unknown Artist"
+                                        : currentArtist
+                        )
+                        .setSubText("LUXE Music")
+                        .setVisibility(
+                                NotificationCompat.VISIBILITY_PUBLIC
+                        )
+                        .setOngoing(playing)
+                        .setOnlyAlertOnce(true)
+                        .setCategory(NotificationCompat.CATEGORY_TRANSPORT)
+                        .setPriority(NotificationCompat.PRIORITY_LOW)
+                        .addAction(
+                                android.R.drawable.ic_media_previous,
+                                "Previous",
+                                previousPendingIntent
+                        )
+                        .addAction(
+                                playing
+                                        ? android.R.drawable.ic_media_pause
+                                        : android.R.drawable.ic_media_play,
+                                playing ? "Pause" : "Play",
+                                playPausePendingIntent
+                        )
+                        .addAction(
+                                android.R.drawable.ic_media_next,
+                                "Next",
+                                nextPendingIntent
+                        );
+
+        if (contentPendingIntent != null) {
+            builder.setContentIntent(contentPendingIntent);
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP
+                && mediaSession != null) {
+            builder.setStyle(
+                    new androidx.media.app.NotificationCompat.MediaStyle()
+                            .setMediaSession(mediaSession.getSessionToken())
+                            .setShowActionsInCompactView(0, 1, 2)
+            );
+        }
+
+        return builder.build();
+    }
+
+    private PendingIntent createActionPendingIntent(
+            String action,
+            int requestCode
+    ) {
+        Intent intent = new Intent(this, PlaybackKeepAliveService.class);
+        intent.setAction(action);
+
+        return PendingIntent.getService(
+                this,
+                requestCode,
+                intent,
+                pendingIntentFlags()
+        );
+    }
+
+    private int pendingIntentFlags() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            return PendingIntent.FLAG_UPDATE_CURRENT
+                    | PendingIntent.FLAG_IMMUTABLE;
+        }
+
+        return PendingIntent.FLAG_UPDATE_CURRENT;
+    }
+
+    private void showNotification() {
+        try {
+            Notification notification = buildNotification();
+
+            NotificationManager manager =
+                    (NotificationManager) getSystemService(
+                            NOTIFICATION_SERVICE
+                    );
+
+            if (manager != null) {
+                manager.notify(NOTIFICATION_ID, notification);
+            }
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                startForeground(
+                        NOTIFICATION_ID,
+                        notification
+                );
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Unable to update notification", e);
+        }
+    }
+
+    private void publishState() {
+        updateMediaSessionPlaybackState();
+
+        Intent stateIntent = new Intent(
+                "com.luxe.music.PLAYBACK_STATE"
+        );
+
+        stateIntent.setPackage(getPackageName());
+
+        boolean playing = false;
+        int position = 0;
+        int duration = 0;
+
+        if (player != null) {
+            try {
+                playing = player.isPlaying();
+                position = player.getCurrentPosition();
+                duration = player.getDuration();
+            } catch (IllegalStateException ignored) {
+            }
+        }
+
+        stateIntent.putExtra("playing", playing);
+        stateIntent.putExtra("isPlaying", playing);
+        stateIntent.putExtra("position", position);
+        stateIntent.putExtra("duration", duration);
+        stateIntent.putExtra("currentIndex", currentIndex);
+        stateIntent.putExtra("title", currentTitle);
+        stateIntent.putExtra("artist", currentArtist);
+        stateIntent.putExtra("album", currentAlbum);
+        stateIntent.putExtra("repeatMode", repeatMode);
+
+        sendBroadcast(stateIntent);
+    }
+
+    /*
+     * Compatibility method for callers that update playback metadata.
+     */
+    public void updatePlayback(
+            String title,
+            String artist,
+            boolean playing
+    ) {
+        currentTitle = title == null ? "LUXE Music" : title;
+        currentArtist = artist == null ? "Unknown Artist" : artist;
+
+        updateMediaSessionMetadata();
+        updateMediaSessionPlaybackState();
+        showNotification();
+        publishState();
+    }
+
+    @Override
+    public void onTaskRemoved(Intent rootIntent) {
+        /*
+         * Keep playback running when the app is removed from Recents.
+         */
+        if (player == null) {
+            stopSelf();
+        }
+
+        super.onTaskRemoved(rootIntent);
+    }
+
+    @Override
+    public void onDestroy() {
+        serviceDestroyed = true;
+
+        handler.removeCallbacks(ticker);
+        releasePlayer();
+        releaseWakeLock();
+
+        if (mediaSession != null) {
+            mediaSession.setActive(false);
+            mediaSession.release();
+            mediaSession = null;
+        }
+
+        super.onDestroy();
+
+        Log.d(TAG, "Playback service destroyed");
+    }
+
+    @Nullable
+    @Override
+    public IBinder onBind(Intent intent) {
+        return null;
+    }
 }
