@@ -6,6 +6,7 @@ import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Intent;
+import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.media.AudioAttributes;
@@ -19,7 +20,6 @@ import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
 import android.os.PowerManager;
-import android.support.v4.media.session.MediaSessionCompat;
 import android.util.Log;
 
 import androidx.annotation.Nullable;
@@ -38,6 +38,15 @@ public class PlaybackKeepAliveService extends Service {
 
     private static final String CHANNEL_ID = "luxe_music_playback";
     private static final int NOTIFICATION_ID = 1201;
+
+    public static final String ACTION_STATE = "com.luxe.music.PLAYBACK_STATE";
+    private static final String ACTION_REQUEST_STATE = "com.luxe.music.REQUEST_PLAYBACK_STATE";
+
+    public static void requestState(Context context) {
+        Intent intent = new Intent(context, PlaybackKeepAliveService.class);
+        intent.setAction(ACTION_REQUEST_STATE);
+        context.startService(intent);
+    }
 
     public static final String ACTION_PLAY_QUEUE = "PLAY_QUEUE";
     public static final String ACTION_PLAY = "PLAY";
@@ -139,6 +148,10 @@ public class PlaybackKeepAliveService extends Service {
         Log.d(TAG, "Received action: " + action);
 
         switch (action) {
+            case ACTION_REQUEST_STATE:
+                publishState();
+                break;
+
             case ACTION_PLAY_QUEUE:
                 handlePlayQueue(intent);
                 break;
@@ -794,7 +807,7 @@ public class PlaybackKeepAliveService extends Service {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP
                 && mediaSession != null) {
             builder.setStyle(
-                    new androidx.media.app.NotificationCompat.MediaStyle()
+                    new Notification.MediaStyle()
                             .setMediaSession(mediaSession.getSessionToken())
                             .setShowActionsInCompactView(0, 1, 2)
             );
@@ -855,7 +868,7 @@ public class PlaybackKeepAliveService extends Service {
         updateMediaSessionPlaybackState();
 
         Intent stateIntent = new Intent(
-                "com.luxe.music.PLAYBACK_STATE"
+                ACTION_STATE
         );
 
         stateIntent.setPackage(getPackageName());
