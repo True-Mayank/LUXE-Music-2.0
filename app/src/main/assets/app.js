@@ -93,11 +93,25 @@ function setArt(element, artwork, fallback = "♪") {
   if (!element) return;
   const url = typeof artwork === "string" ? artwork : "";
   if (url) {
-    element.innerHTML = `<img src="${esc(url)}" alt="" loading="lazy">`;
+    const existing = element.querySelector("img");
+    // Native playback state arrives every second. Keep an existing image when
+    // its URL has not changed, otherwise the cover flashes/reloads continuously.
+    if (!existing || existing.getAttribute("src") !== url) {
+      const image = document.createElement("img");
+      image.alt = "";
+      image.loading = "lazy";
+      image.decoding = "async";
+      image.src = url;
+      element.replaceChildren(image);
+    }
     element.classList.add("has-artwork");
+    element.classList.remove("no-artwork");
   } else {
-    element.textContent = fallback || "♪";
+    if (element.querySelector("img") || element.textContent !== (fallback || "♪")) {
+      element.textContent = fallback || "♪";
+    }
     element.classList.remove("has-artwork");
+    element.classList.add("no-artwork");
   }
 }
 
@@ -1178,21 +1192,57 @@ window.LUXEAndroid = {
 
 
   onNativeArtworkUpdated(songId, artwork) {
-    const song = songs.find(item => item.id === songId);
+    const song = songs.find(item => String(item.id) === String(songId));
     if (!song) return;
+
     song.artwork = artwork || "";
     song.artworkUrl = artwork || "";
+
+    // Update only this song's artwork nodes. Re-rendering the complete
+    // library for every cover makes large libraries feel frozen.
+    document.querySelectorAll(".art[data-art-song]").forEach(element => {
+      if (element.dataset.artSong !== String(songId)) return;
+      if (!artwork) {
+        element.classList.remove("has-artwork");
+        element.classList.add("no-artwork");
+        element.replaceChildren(document.createTextNode("♫"));
+        return;
+      }
+      element.classList.remove("no-artwork");
+      element.classList.add("has-artwork");
+      const image = document.createElement("img");
+      image.alt = "";
+      image.loading = "lazy";
+      image.decoding = "async";
+      image.src = artwork;
+      element.replaceChildren(image);
+    });
+
     updatePlayerArtwork();
-    render();
   },
 
   onNativeSongMetadataUpdated(songData) {
     let data = songData;
     try { if (typeof data === "string") data = JSON.parse(data); } catch { return; }
-    const song = songs.find(item => item.id === data?.id);
+    const song = songs.find(item => String(item.id) === String(data?.id));
     if (!song) return;
-    Object.assign(song, { title:data.title||song.title, artist:data.artist||song.artist, album:data.album||song.album });
-    render(); updatePlayer();
+
+    Object.assign(song, {
+      title: data.title || song.title,
+      artist: data.artist || song.artist,
+      album: data.album || song.album
+    });
+
+    // Update the existing row instead of rebuilding the whole library for
+    // every metadata callback from Android's background scanner.
+    document.querySelectorAll(".song[data-song-id]").forEach(row => {
+      if (row.dataset.songId !== String(song.id)) return;
+      const title = row.querySelector(".song-info strong");
+      const details = row.querySelector(".song-info span");
+      if (title) title.textContent = song.title;
+      if (details) details.textContent = `${song.artist} • ${song.album}`;
+    });
+    updatePlayer();
   },
 
   onNativeStatus(message) {
@@ -2344,11 +2394,14 @@ function artHTML(
 
       <div
         class="art ${className} has-artwork"
+        data-art-song="${esc(song.id)}"
       >
 
         <img
           src="${esc(getArtworkUrl(song))}"
           alt=""
+          loading="lazy"
+          decoding="async"
         >
 
       </div>
@@ -2361,6 +2414,7 @@ function artHTML(
 
     <div
       class="art ${className} no-artwork"
+      data-art-song="${esc(song.id)}"
     >
       ♫
     </div>
@@ -2666,6 +2720,7 @@ let luxeNativePlaying = false;
 let luxeNativePosition = 0;
 let luxeNativeDuration = 0;
 let luxeNativeCurrentId = '';
+let luxeProgressSeeking = false;
 let luxeObjectUrl = '';
 let luxeActivePlaylistId = null;
 
@@ -3001,9 +3056,11 @@ window.LuxeAndroidNativeState = function(state) {
   luxeNativePlaying=!!state.playing; luxeNativePosition=Number(state.position||0)/1000; luxeNativeDuration=Number(state.duration||0)/1000; luxeNativeCurrentId=state.id||'';
   const matched=getSongById(state.id); if(matched) { current=songs.indexOf(matched); const qi=currentQueue.findIndex(s=>s.id===matched.id); if(qi>=0) queuePosition=qi; updatePlayer(); }
   setPlayButtonState(luxeNativePlaying);
-  if($('#currentTime')) $('#currentTime').textContent=formatTime(luxeNativePosition);
+  if(!luxeProgressSeeking) {
+    if($('#currentTime')) $('#currentTime').textContent=formatTime(luxeNativePosition);
+    if($('#progress')&&luxeNativeDuration) $('#progress').value=(luxeNativePosition/luxeNativeDuration)*100;
+  }
   if($('#duration')) $('#duration').textContent=formatTime(luxeNativeDuration);
-  if($('#progress')&&luxeNativeDuration) $('#progress').value=(luxeNativePosition/luxeNativeDuration)*100;
   updateMiniProgress(luxeNativePosition,luxeNativeDuration);
   if(state.title) $('#miniPlayer')?.classList.remove('hidden');
 };
@@ -3044,7 +3101,25 @@ $('#nextBtn')?.addEventListener('click',playNext);
 $('#prevBtn')?.addEventListener('click',playPrevious);
 $('#repeatBtn')?.addEventListener('click',()=>{repeat=!repeat;$('#repeatBtn')?.classList.toggle('active',repeat);if(isNativeAndroid()&&window.LuxeAndroid.nativeSetRepeat)window.LuxeAndroid.nativeSetRepeat(repeat);});
 $('#shuffleBtn')?.addEventListener('click',()=>{if(currentQueue.length>1){const currentSong=currentQueue[queuePosition];if(!currentQueueBase.length)currentQueueBase=[...currentQueue];shuffleArray(currentQueue);queuePosition=currentQueue.findIndex(s=>s.id===currentSong?.id);if(isNativeAndroid()&&window.LuxeAndroid?.nativePlayQueue){const nq=currentQueue.filter(s=>s.nativeUrl).map(s=>({id:s.id,title:s.title,artist:s.artist,url:s.nativeUrl}));window.LuxeAndroid.nativePlayQueue(JSON.stringify(nq),Math.max(0,nq.findIndex(s=>s.id===currentSong?.id)),repeat);}updatePlayer();}});
-$('#progress')?.addEventListener('input',e=>{const value=Number(e.target.value)/100;if(isNativeAndroid()&&window.LuxeAndroid.nativeSeek)window.LuxeAndroid.nativeSeek(Math.round(value*luxeNativeDuration*1000));else if(audio&&audio.duration)audio.currentTime=value*audio.duration;});
+$('#progress')?.addEventListener('pointerdown',()=>{luxeProgressSeeking=true;});
+$('#progress')?.addEventListener('touchstart',()=>{luxeProgressSeeking=true;},{passive:true});
+$('#progress')?.addEventListener('input',e=>{
+  const value=Math.max(0,Math.min(1,Number(e.target.value)/100));
+  const duration=isNativeAndroid()?luxeNativeDuration:(audio?.duration||0);
+  const preview=value*duration;
+  if($('#currentTime')) $('#currentTime').textContent=formatTime(preview);
+  e.target.style.setProperty('--range-progress',`${value*100}%`);
+});
+function commitProgressSeek(e){
+  const value=Math.max(0,Math.min(1,Number(e.target.value)/100));
+  if(isNativeAndroid()&&window.LuxeAndroid?.nativeSeek&&luxeNativeDuration>0){
+    window.LuxeAndroid.nativeSeek(Math.round(value*luxeNativeDuration*1000));
+  }else if(audio&&audio.duration){audio.currentTime=value*audio.duration;}
+  luxeProgressSeeking=false;
+}
+$('#progress')?.addEventListener('change',commitProgressSeek);
+$('#progress')?.addEventListener('pointerup',commitProgressSeek);
+$('#progress')?.addEventListener('touchend',commitProgressSeek,{passive:true});
 $('#volume')?.addEventListener('input',e=>{if(audio)audio.volume=Number(e.target.value);});
 function togglePlayback() {
   if(!currentQueue.length) { const list=getCurrentVisibleQueue(); if(list.length) startQueue(list,0); return; }
