@@ -127,7 +127,7 @@ public class MainActivity extends Activity {
             Uri tree = Uri.parse(raw);
             boolean hasReadGrant = false;
             for (android.content.UriPermission permission : getContentResolver().getPersistedUriPermissions()) {
-                if (tree.equals(permission.getUri()) && permission.isReadPermission()) {
+                if (tree.toString().equals(permission.getUri().toString()) && permission.isReadPermission()) {
                     hasReadGrant = true;
                     break;
                 }
@@ -153,9 +153,17 @@ public class MainActivity extends Activity {
         if (requestCode != PICK_MUSIC_FOLDER || resultCode != RESULT_OK || data == null || data.getData() == null) return;
         Uri tree = data.getData();
         try {
-            int grantFlags = data.getFlags() & (Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
-            getContentResolver().takePersistableUriPermission(tree, grantFlags & Intent.FLAG_GRANT_READ_URI_PERMISSION);
-        } catch (Exception ignored) {}
+            int grantFlags = data.getFlags()
+                    & (Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+            // SAF providers normally return READ; request it explicitly as a fallback
+            // so the selected folder remains accessible after LUXE is reopened.
+            if ((grantFlags & Intent.FLAG_GRANT_READ_URI_PERMISSION) == 0) {
+                grantFlags |= Intent.FLAG_GRANT_READ_URI_PERMISSION;
+            }
+            getContentResolver().takePersistableUriPermission(tree, grantFlags);
+        } catch (Exception e) {
+            android.util.Log.w("LUXEMainActivity", "Could not persist folder permission", e);
+        }
         prefs.edit().putString(TREE_KEY, tree.toString()).apply();
         // Avoid a full metadata pass on the first folder selection; names are
         // available immediately and artwork is extracted progressively in background.
