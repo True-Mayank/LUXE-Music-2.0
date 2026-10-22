@@ -626,6 +626,11 @@ public class PlaybackKeepAliveService extends Service {
         releaseWakeLock();
 
         currentIndex = -1;
+        queue.clear();
+        isPreparing = false;
+        currentTitle = "LUXE Music";
+        currentArtist = "Unknown Artist";
+        currentAlbum = "Local Music";
 
         artworkExecutor.shutdownNow();
         if (currentArtwork != null && !currentArtwork.isRecycled()) {
@@ -996,13 +1001,21 @@ public class PlaybackKeepAliveService extends Service {
 
     @Override
     public void onTaskRemoved(Intent rootIntent) {
-        /*
-         * Keep playback running when the app is removed from Recents.
-         */
-        if (player == null) {
-            stopSelf();
+        // When the user dismisses LUXE from Recents, stop playback completely.
+        // This also removes the notification and deactivates the lock-screen session.
+        stopPlayback();
+        queue.clear();
+        currentTitle = "LUXE Music";
+        currentArtist = "Unknown Artist";
+        currentAlbum = "Local Music";
+        if (mediaSession != null) {
+            try {
+                mediaSession.setActive(false);
+            } catch (Exception ignored) {
+            }
         }
-
+        stopForeground(true);
+        stopSelf();
         super.onTaskRemoved(rootIntent);
     }
 
