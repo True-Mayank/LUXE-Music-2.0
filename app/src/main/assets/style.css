@@ -108,3 +108,7 @@ input[type=range]{--range-progress:0%;appearance:none;-webkit-appearance:none;di
 #sortMenu.hidden,#playlistSortMenu.hidden{display:none!important}
 #playerModal:not(.hidden) #sortMenu,#playerModal:not(.hidden) #playlistSortMenu{display:none!important}
 #playlistPanel.hidden #playlistSortMenu{display:none!important}
+
+/* Android-style collapse control stays in the top safe area of the expanded player. */
+#closePlayer{position:fixed;top:calc(var(--safe-top) + 12px);left:16px;z-index:45;width:44px;height:44px;display:grid;place-items:center;background:#151518e8;border:1px solid #ffffff18;border-radius:50%;color:var(--text);font-size:29px;line-height:1;box-shadow:0 4px 18px #0005;touch-action:manipulation}
+#progress{touch-action:pan-y;accent-color:var(--accent)}
