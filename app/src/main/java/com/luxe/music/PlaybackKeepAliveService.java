@@ -10,6 +10,7 @@ import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.media.AudioAttributes;
+import android.media.MediaMetadataRetriever;
 import android.media.MediaPlayer;
 import android.media.MediaMetadata;
 import android.media.session.MediaSession;
@@ -29,6 +30,8 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.InputStream;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -69,6 +72,8 @@ public class PlaybackKeepAliveService extends Service {
     private MediaPlayer player;
     private MediaSession mediaSession;
     private PowerManager.WakeLock wakeLock;
+    private Bitmap currentArtwork;
+    private final ExecutorService artworkExecutor = Executors.newSingleThreadExecutor();
 
     private final Handler handler = new Handler(Looper.getMainLooper());
 
@@ -382,6 +387,11 @@ public class PlaybackKeepAliveService extends Service {
 
         Track track = queue.get(currentIndex);
 
+        if (currentArtwork != null && !currentArtwork.isRecycled()) {
+            currentArtwork.recycle();
+        }
+        currentArtwork = null;
+        loadArtworkInBackground(track);
         releasePlayer();
 
         currentTitle = track.title;
@@ -396,6 +406,7 @@ public class PlaybackKeepAliveService extends Service {
             // This also avoids foreground-service start timeouts on newer Android.
             startForeground(NOTIFICATION_ID, buildNotification());
             player = new MediaPlayer();
+            player.setOnSeekCompleteListener(mp -> publishState());
 
             player.setAudioAttributes(
                     new AudioAttributes.Builder()
@@ -581,10 +592,11 @@ public class PlaybackKeepAliveService extends Service {
             return;
         }
 
-        int position = intent.getIntExtra(
+        long requestedPosition = intent.getLongExtra(
                 "position",
-                intent.getIntExtra("seekTo", 0)
+                intent.getLongExtra("seekTo", 0L)
         );
+        int position = (int) Math.max(0L, Math.min(requestedPosition, Integer.MAX_VALUE));
 
         try {
             player.seekTo(Math.max(position, 0));
@@ -615,6 +627,11 @@ public class PlaybackKeepAliveService extends Service {
 
         currentIndex = -1;
 
+        artworkExecutor.shutdownNow();
+        if (currentArtwork != null && !currentArtwork.isRecycled()) {
+            currentArtwork.recycle();
+            currentArtwork = null;
+        }
         if (mediaSession != null) {
             mediaSession.setActive(false);
         }
@@ -655,7 +672,7 @@ public class PlaybackKeepAliveService extends Service {
             return;
         }
 
-        MediaMetadata metadata = new MediaMetadata.Builder()
+        MediaMetadata.Builder metadata = new MediaMetadata.Builder()
                 .putString(
                         MediaMetadata.METADATA_KEY_TITLE,
                         currentTitle
@@ -667,10 +684,66 @@ public class PlaybackKeepAliveService extends Service {
                 .putString(
                         MediaMetadata.METADATA_KEY_ALBUM,
                         currentAlbum
-                )
-                .build();
+                );
 
-        mediaSession.setMetadata(metadata);
+        if (player != null) {
+            try {
+                if (player.getDuration() > 0) {
+                    metadata.putLong(MediaMetadata.METADATA_KEY_DURATION, player.getDuration());
+                }
+            } catch (IllegalStateException ignored) {}
+        }
+        if (currentArtwork != null && !currentArtwork.isRecycled()) {
+            metadata.putBitmap(MediaMetadata.METADATA_KEY_ART, currentArtwork);
+            metadata.putBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART, currentArtwork);
+        }
+        mediaSession.setMetadata(metadata.build());
+
+    }
+
+    private void loadArtworkInBackground(Track track) {
+        final String trackId = track.id;
+        artworkExecutor.execute(() -> {
+            Bitmap found = null;
+            MediaMetadataRetriever retriever = null;
+            try {
+                if (trackId != null && (trackId.startsWith("content://") || trackId.startsWith("file://"))) {
+                    retriever = new MediaMetadataRetriever();
+                    retriever.setDataSource(getApplicationContext(), Uri.parse(trackId));
+                    byte[] bytes = retriever.getEmbeddedPicture();
+                    if (bytes != null && bytes.length > 0) {
+                        Bitmap decoded = BitmapFactory.decodeByteArray(bytes, 0, bytes.length);
+                        if (decoded != null) {
+                            int max = 512;
+                            float scale = Math.min(1f, max / (float) Math.max(decoded.getWidth(), decoded.getHeight()));
+                            if (scale < 1f) {
+                                found = Bitmap.createScaledBitmap(decoded, Math.max(1, (int)(decoded.getWidth() * scale)), Math.max(1, (int)(decoded.getHeight() * scale)), true);
+                                if (found != decoded) decoded.recycle();
+                            } else found = decoded;
+                        }
+                    }
+                }
+            } catch (Exception e) {
+                Log.d(TAG, "No embedded cover art for current track", e);
+            } finally {
+                if (retriever != null) try { retriever.release(); } catch (Exception ignored) {}
+            }
+            final Bitmap result = found;
+            handler.post(() -> {
+                if (serviceDestroyed || trackId == null || !trackId.equals(currentTrackId())) {
+                    if (result != null && !result.isRecycled()) result.recycle();
+                    return;
+                }
+                if (currentArtwork != null && !currentArtwork.isRecycled()) currentArtwork.recycle();
+                currentArtwork = result;
+                updateMediaSessionMetadata();
+                showNotification();
+            });
+        });
+    }
+
+    private String currentTrackId() {
+        return currentIndex >= 0 && currentIndex < queue.size() ? queue.get(currentIndex).id : null;
     }
 
     private void updateMediaSessionPlaybackState() {
@@ -803,10 +876,18 @@ public class PlaybackKeepAliveService extends Service {
         if (contentPendingIntent != null) {
             builder.setContentIntent(contentPendingIntent);
         }
+        if (currentArtwork != null && !currentArtwork.isRecycled()) {
+            builder.setLargeIcon(currentArtwork);
+        }
 
-        // Keep the notification built with NotificationCompat.Builder.
-        // The framework Notification.MediaStyle is incompatible with its Style type.
-        // Action buttons remain available through the addAction() calls above.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP
+                && mediaSession != null) {
+            builder.setStyle(
+                    new NotificationCompat.MediaStyle()
+                            .setMediaSession(mediaSession.getSessionToken())
+                            .setShowActionsInCompactView(0, 1, 2)
+            );
+        }
 
         return builder.build();
     }
@@ -883,13 +964,16 @@ public class PlaybackKeepAliveService extends Service {
 
         stateIntent.putExtra("playing", playing);
         stateIntent.putExtra("isPlaying", playing);
-        stateIntent.putExtra("position", position);
-        stateIntent.putExtra("duration", duration);
+        stateIntent.putExtra("position", (long) position);
+        stateIntent.putExtra("duration", (long) duration);
         stateIntent.putExtra("currentIndex", currentIndex);
         stateIntent.putExtra("title", currentTitle);
         stateIntent.putExtra("artist", currentArtist);
         stateIntent.putExtra("album", currentAlbum);
         stateIntent.putExtra("repeatMode", repeatMode);
+        stateIntent.putExtra("id", currentTrackId());
+        stateIntent.putExtra("queueIndex", currentIndex);
+        stateIntent.putExtra("queueSize", queue.size());
 
         sendBroadcast(stateIntent);
     }
@@ -931,6 +1015,11 @@ public class PlaybackKeepAliveService extends Service {
         releasePlayer();
         releaseWakeLock();
 
+        artworkExecutor.shutdownNow();
+        if (currentArtwork != null && !currentArtwork.isRecycled()) {
+            currentArtwork.recycle();
+            currentArtwork = null;
+        }
         if (mediaSession != null) {
             mediaSession.setActive(false);
             mediaSession.release();
