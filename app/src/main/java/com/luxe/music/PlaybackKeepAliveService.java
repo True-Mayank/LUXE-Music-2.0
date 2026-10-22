@@ -804,14 +804,9 @@ public class PlaybackKeepAliveService extends Service {
             builder.setContentIntent(contentPendingIntent);
         }
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP
-                && mediaSession != null) {
-            builder.setStyle(
-                    new Notification.MediaStyle()
-                            .setMediaSession(mediaSession.getSessionToken())
-                            .setShowActionsInCompactView(0, 1, 2)
-            );
-        }
+        // Keep the notification built with NotificationCompat.Builder.
+        // The framework Notification.MediaStyle is incompatible with its Style type.
+        // Action buttons remain available through the addAction() calls above.
 
         return builder.build();
     }
