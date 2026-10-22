@@ -24,6 +24,9 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.security.MessageDigest;
 import java.util.ArrayList;
@@ -92,6 +95,11 @@ public class MainActivity extends Activity {
                         if (mime == null) mime = "audio/mpeg";
                         return new WebResourceResponse(mime, null, stream);
                     }
+                    if (HOST.equalsIgnoreCase(u.getHost()) && u.getPath() != null && u.getPath().startsWith("/artwork/")) {
+                        File artwork = artworkFileForToken(u.getLastPathSegment());
+                        if (artwork == null || !artwork.isFile()) return new WebResourceResponse("image/jpeg", null, 404, "Not Found", null, null);
+                        return new WebResourceResponse("image/jpeg", null, new FileInputStream(artwork));
+                    }
                 } catch (Exception ignored) {}
                 return super.shouldInterceptRequest(view, url);
             }
@@ -149,7 +157,9 @@ public class MainActivity extends Activity {
             getContentResolver().takePersistableUriPermission(tree, grantFlags & Intent.FLAG_GRANT_READ_URI_PERMISSION);
         } catch (Exception ignored) {}
         prefs.edit().putString(TREE_KEY, tree.toString()).apply();
-        scanAndSend(tree, true);
+        // Avoid a full metadata pass on the first folder selection; names are
+        // available immediately and artwork is extracted progressively in background.
+        scanAndSend(tree, false);
     }
 
     private void scanAndSend(Uri treeUri, boolean refreshMetadata) {
@@ -172,7 +182,8 @@ public class MainActivity extends Activity {
                     song.put("title", parseTitle(e.name));
                     song.put("artist", parseArtist(e.name));
                     song.put("album", "Local Music");
-                    song.put("artwork", JSONObject.NULL);
+                    String cachedArtwork = cachedArtworkUrl(e.uri.toString());
+                    song.put("artwork", cachedArtwork == null ? JSONObject.NULL : cachedArtwork);
                     songs.put(song);
                 }
                 JSONObject payload = new JSONObject();
@@ -181,11 +192,10 @@ public class MainActivity extends Activity {
                 payload.put("songs", songs);
                 if (thisGeneration != scanGeneration) return;
                 sendLibraryToJavascript(payload);
-                // On startup, show the cached folder contents immediately. A full
-                // metadata/artwork extraction is reserved for an explicit rescan
-                // or fresh folder selection, avoiding hundreds of expensive reads
-                // on every app launch.
-                if (refreshMetadata && thisGeneration == scanGeneration) enrichSongs(entries, true);
+                // Show the song list immediately, then fill missing artwork in the
+                // background. Artwork is cached as small JPEG files, so later launches
+                // can display it without passing large base64 strings through WebView.
+                if (thisGeneration == scanGeneration) enrichSongs(entries, refreshMetadata);
                 else sendNativeStatus("Music library ready.");
             } catch (Exception e) {
                 sendNativeError("Unable to scan the music folder.");
@@ -212,31 +222,86 @@ public class MainActivity extends Activity {
 
     private void enrichSongs(List<Entry> entries, boolean refreshMetadata) {
         for (Entry e : entries) {
+            if (Thread.currentThread().isInterrupted()) return;
+            File cached = artworkFile(e.uri.toString());
+            if (cached.isFile() && cached.length() > 0) {
+                if (!refreshMetadata) continue;
+            }
+            android.media.MediaMetadataRetriever r = null;
             try {
-                android.media.MediaMetadataRetriever r = new android.media.MediaMetadataRetriever();
+                r = new android.media.MediaMetadataRetriever();
                 r.setDataSource(this, e.uri);
-                String title=r.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_TITLE);
-                String artist=r.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_ARTIST);
-                String album=r.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_ALBUM);
-                if(refreshMetadata && (title!=null || artist!=null || album!=null)){
-                    JSONObject m=new JSONObject(); m.put("id",e.uri.toString()); m.put("title",title); m.put("artist",artist); m.put("album",album); sendSongMetadataUpdated(m);
+                if (refreshMetadata) {
+                    String title = r.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_TITLE);
+                    String artist = r.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_ARTIST);
+                    String album = r.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_ALBUM);
+                    if (title != null || artist != null || album != null) {
+                        JSONObject m = new JSONObject();
+                        m.put("id", e.uri.toString());
+                        m.put("title", title);
+                        m.put("artist", artist);
+                        m.put("album", album);
+                        sendSongMetadataUpdated(m);
+                    }
                 }
-                byte[] picture=r.getEmbeddedPicture();
-                if(picture!=null && picture.length>0) sendNativeArtworkUpdated(e.uri.toString(),createArtworkDataUri(picture));
-                r.release();
-            } catch(Exception ignored) {}
+                if (!cached.isFile() || cached.length() == 0) {
+                    byte[] picture = r.getEmbeddedPicture();
+                    if (picture != null && picture.length > 0) {
+                        String artworkUrl = saveArtwork(e.uri.toString(), picture);
+                        if (artworkUrl != null) sendNativeArtworkUpdated(e.uri.toString(), artworkUrl);
+                    }
+                }
+            } catch (Exception ignored) {
+            } finally {
+                if (r != null) try { r.release(); } catch (Exception ignored) {}
+            }
         }
-        sendNativeStatus("Artwork and metadata scan complete.");
+        sendNativeStatus("Music library ready.");
     }
 
-    private String createArtworkDataUri(byte[] data) {
+    private File artworkDirectory() {
+        File dir = new File(getFilesDir(), "luxe_artwork");
+        if (!dir.exists()) dir.mkdirs();
+        return dir;
+    }
+
+    private File artworkFile(String id) {
+        return artworkFileForToken(token(id));
+    }
+
+    private File artworkFileForToken(String value) {
+        if (value == null || !value.matches("[a-fA-F0-9]{32,64}")) return null;
+        return new File(artworkDirectory(), value + ".jpg");
+    }
+
+    private String cachedArtworkUrl(String id) {
+        File file = artworkFile(id);
+        return file.isFile() && file.length() > 0 ? "https://" + HOST + "/artwork/" + token(id) : null;
+    }
+
+    private String saveArtwork(String id, byte[] data) {
+        Bitmap bitmap = null;
         try {
-            Bitmap bitmap=BitmapFactory.decodeByteArray(data,0,data.length); if(bitmap==null)return "";
-            int max=500; float scale=Math.min(1f, max/(float)Math.max(bitmap.getWidth(),bitmap.getHeight()));
-            if(scale<1f) bitmap=Bitmap.createScaledBitmap(bitmap,Math.max(1,(int)(bitmap.getWidth()*scale)),Math.max(1,(int)(bitmap.getHeight()*scale)),true);
-            ByteArrayOutputStream out=new ByteArrayOutputStream(); bitmap.compress(Bitmap.CompressFormat.JPEG,82,out); bitmap.recycle();
-            return "data:image/jpeg;base64,"+Base64.encodeToString(out.toByteArray(),Base64.NO_WRAP);
-        }catch(Exception e){return "";}
+            bitmap = BitmapFactory.decodeByteArray(data, 0, data.length);
+            if (bitmap == null) return null;
+            int max = 500;
+            float scale = Math.min(1f, max / (float) Math.max(bitmap.getWidth(), bitmap.getHeight()));
+            if (scale < 1f) {
+                Bitmap scaled = Bitmap.createScaledBitmap(bitmap, Math.max(1, (int)(bitmap.getWidth() * scale)), Math.max(1, (int)(bitmap.getHeight() * scale)), true);
+                if (scaled != bitmap) bitmap.recycle();
+                bitmap = scaled;
+            }
+            File target = artworkFile(id);
+            try (FileOutputStream out = new FileOutputStream(target)) {
+                bitmap.compress(Bitmap.CompressFormat.JPEG, 82, out);
+                out.flush();
+            }
+            return "https://" + HOST + "/artwork/" + token(id);
+        } catch (Exception e) {
+            return null;
+        } finally {
+            if (bitmap != null && !bitmap.isRecycled()) bitmap.recycle();
+        }
     }
 
     private boolean isAudio(String name,String mime){ if(mime!=null&&mime.toLowerCase().startsWith("audio/"))return true; return name!=null&&name.matches("(?i).+\\.(mp3|m4a|flac|wav|aac|ogg|opus|webm|oga)$"); }
