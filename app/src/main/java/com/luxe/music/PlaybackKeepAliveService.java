@@ -884,7 +884,6 @@ public class PlaybackKeepAliveService extends Service {
                 && mediaSession != null) {
             builder.setStyle(
                     new androidx.media.app.NotificationCompat.MediaStyle()
-                            .setMediaSession(mediaSession.getSessionToken())
                             .setShowActionsInCompactView(0, 1, 2)
             );
         }
